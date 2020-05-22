@@ -266,9 +266,9 @@ handleError (Left errMsg) =
   case errMsg of
     ProxyConnectionError msg -> err "Cannot connect to the proxy" >> debugPP msg
     ProxyForwardError msg    -> err "Connection not allowed by the proxy" >> debugPP msg
-    TunnelError msg          -> err "Cannot establish the connection to the server" >> debugPP msg
+    TunnelError msg          -> err "Cannot establish the connection to the server" >> debugPP msg >> error "terminating"
     LocalServerError msg     -> err "Cannot create the localServer, port already binded ?" >> debugPP msg
-    WebsocketError msg       -> err "Cannot establish websocket connection with the server" >> debugPP msg
+    WebsocketError msg       -> err "Cannot establish websocket connection with the server" >> debugPP msg >> error "terminating"
     TlsError msg             -> err "Cannot do tls handshake with the server" >> debugPP msg
     Other msg                -> debugPP msg
 
