@@ -1,6 +1,7 @@
 module Logger where
 
-import           ClassyPrelude
+import           Prelude (String)
+import           Protolude
 import           Network.Socket    (HostName, PortNumber)
 import qualified System.Log.Logger as LOG
 
@@ -14,7 +15,7 @@ init lvl = LOG.updateGlobalLogger "wstunnel" $ case lvl of
   NORMAL  -> LOG.setLevel LOG.INFO
 
 toStr :: (HostName, PortNumber) -> String
-toStr (host, port) = fromString host <> ":" <> show port
+toStr (host, port) = toS host <> ":" <> show port
 
 err :: String -> IO()
 err msg = LOG.errorM "wstunnel" $ "ERROR :: " <> msg

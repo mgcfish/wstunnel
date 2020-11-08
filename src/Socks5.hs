@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass            #-}
 {-# LANGUAGE DuplicateRecordFields     #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
@@ -9,20 +8,19 @@
 module Socks5 where
 
 
-import           ClassyPrelude
+import           Prelude               (String)
+import           Protolude             hiding (get, put)
 import           Data.Binary
 import           Data.Binary.Get
 import           Data.Binary.Put
-import qualified Data.ByteString        as BC
+import qualified Data.ByteString        as B
 import qualified Data.ByteString.Char8  as BC8
-import           Data.Either
 import qualified Data.Text              as T
 import qualified Data.Text.Encoding     as E
-import           Network.Socket         (HostAddress, HostName, PortNumber)
-import           Numeric                (showHex)
+import           Network.Socket         (HostName, PortNumber)
+import qualified Data.Vector            as V
+import           Data.Vector            (Vector)
 
-import           Control.Monad.Except   (MonadError)
-import qualified Data.Streaming.Network as N
 
 
 socksVersion :: Word8
@@ -81,7 +79,7 @@ instance Binary RequestAuth where
     guard (version == 0x05)
     nbMethods <- fromIntegral <$> getWord8
     guard (nbMethods > 0 && nbMethods <= 0xFF)
-    methods <- replicateM nbMethods get
+    methods <- V.replicateM nbMethods get
     return $ RequestAuth version methods
 
 
@@ -115,9 +113,8 @@ instance Binary Request where
     put command
     putWord8 0x00 -- RESERVED
     putWord8 0x03 -- DOMAINNAME
-    let host = BC8.pack addr
-    putWord8 (fromIntegral . length $ host)
-    traverse_ put host
+    putWord8 (fromIntegral . length $ addr)
+    traverse_ put addr
     putWord16be (fromIntegral port)
 
 
@@ -128,33 +125,33 @@ instance Binary Request where
     cmd <- get :: Get Command
     _ <- getWord8 -- RESERVED
 
-    opCode <- fromIntegral <$> getWord8 -- Addr type, we support only ipv4 and domainame
+    opCode <- fromIntegral <$> getWord8 :: Get Int -- Addr type, we support only ipv4 and domainame
     guard (opCode == 0x03 || opCode == 0x01) -- DOMAINNAME OR IPV4
 
     host <- if opCode == 0x03
             then do
               length <- fromIntegral <$> getWord8
-              host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
+              host <- either (const T.empty) identity . E.decodeUtf8' . B.pack <$> replicateM length getWord8
               return host
             else do
               ipv4 <- replicateM 4 getWord8 :: Get [Word8]
-              let ipv4Str = T.intercalate "." $ fmap (tshow . fromEnum) ipv4
+              let ipv4Str = T.intercalate "." $ fmap (show . fromEnum) ipv4
               return ipv4Str
 
-    guard (not $ null host)
+    guard (not $ T.null host)
     port <- fromIntegral <$> getWord16be
 
     return Request
       { version = version
       , command = cmd
-      , addr = unpack host
+      , addr = toS host
       , port = port
       }
 
 
 
-toHex :: LByteString -> String
-toHex = foldr showHex "" . unpack
+--toHex :: LByteString -> String
+--toHex = foldr showHex "" . unpack
 
 data Response = Response
   { version    :: Int
@@ -186,9 +183,8 @@ instance Binary Response where
     put returnCode
     putWord8 0x00 -- Reserved
     putWord8 0x03 -- DOMAINNAME
-    let host = BC8.pack serverAddr
-    putWord8 (fromIntegral . length $ host)
-    traverse_ put host
+    putWord8 (fromIntegral . length $ serverAddr)
+    traverse_ put serverAddr
     putWord16be (fromIntegral serverPort)
 
 
@@ -196,19 +192,19 @@ instance Binary Response where
     version <- fromIntegral <$> getWord8
     guard(version == fromIntegral socksVersion)
     ret <- toEnum . min maxBound . fromIntegral <$> getWord8
-    getWord8 -- RESERVED
-    opCode <- fromIntegral <$> getWord8 -- Type
+    _ <- getWord8 -- RESERVED
+    opCode <- fromIntegral <$> getWord8 :: Get Int -- Type
     guard(opCode == 0x03)
-    length <- fromIntegral <$> getWord8
-    host <- either (const T.empty) id . E.decodeUtf8' <$> replicateM length getWord8
-    guard (not $ null host)
+    length_ <- fromIntegral <$> getWord8 :: Get Int
+    host <- V.replicateM length_ getWord8
+    guard (not $ V.null host)
 
     port <- getWord16be
 
     return Response
       { version = version
       , returnCode = ret
-      , serverAddr = unpack host
+      , serverAddr = toS (B.pack $ V.toList host)
       , serverPort = fromIntegral port
       }
 

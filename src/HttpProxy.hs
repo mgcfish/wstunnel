@@ -7,13 +7,16 @@ module HttpProxy () where
 
 
 
-import           ClassyPrelude
+import           Protolude
 import qualified Data.ByteString.Char8     as BC
 
 import           Control.Monad.Except
 import qualified Data.Conduit.Network.TLS  as N
 import qualified Data.Streaming.Network    as N
 
+import           Data.IORef
+import           Data.String
+import           System.Timeout
 import qualified Data.ByteString.Base64    as B64
 import           Network.Socket            (HostName, PortNumber)
 import qualified Network.Socket            as N hiding (recv, recvFrom, send,
@@ -67,12 +70,12 @@ httpProxyConnection HttpProxySettings{..} (host, port) app = onError $ do
       responseM <- read conn
       case responseM of
         Nothing       -> return buff
-        Just response -> if "\r\n\r\n" `isInfixOf` response
+        Just response -> if "\r\n\r\n" `BC.isInfixOf` response
                           then return $ buff <> response
                           else readConnectResponse (buff <> response) conn
 
     isAuthorized :: ByteString -> Bool
-    isAuthorized response = " 200 " `isInfixOf` response
+    isAuthorized response = " 200 " `BC.isInfixOf` response
 
     onError f = catch f $ \(e :: SomeException) -> return $
       if (take 10 (show e) == "user error")

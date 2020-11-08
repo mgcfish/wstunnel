@@ -6,11 +6,13 @@
 module Types where
 
 
-import           ClassyPrelude
+import           Prelude (String)
+import           Protolude
 import           Data.Maybe
 import           System.IO (stdin, stdout)
-import           Data.ByteString (hGetSome, hPutStr)
+import           Data.ByteString (hGetSome)
 
+import           Data.IORef
 import qualified Data.Streaming.Network        as N
 import qualified Network.Connection            as NC
 import           Network.Socket                (HostName, PortNumber)
@@ -82,8 +84,9 @@ data TunnelSettings = TunnelSettings
   , udpTimeout    :: Int
   }
 
-instance Show TunnelSettings where
-  show TunnelSettings{..} =  localBind <> ":" <> show localPort
+instance Print TunnelSettings where
+  hPutStrLn h tunnelSettings = hPutStr h tunnelSettings >> hPutStrLn h ""
+  hPutStr h TunnelSettings{..} = hPutStr h $ localBind <> ":" <> show localPort
                              <> (if isNothing proxySetting
                                  then mempty
                                  else " <==PROXY==> " <> host (fromJust proxySetting) <> ":" <> (show . port $ fromJust proxySetting)

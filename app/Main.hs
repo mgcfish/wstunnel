@@ -5,8 +5,11 @@
 
 module Main where
 
-import           ClassyPrelude          hiding (getArgs, head)
+import           Protolude hiding (head)
 import qualified Data.ByteString.Char8  as BC
+
+import           Data.IORef
+import           Data.String
 import           Data.List              (head, (!!))
 import           Data.Maybe             (fromMaybe)
 import           System.Console.CmdArgs
@@ -88,9 +91,9 @@ cmdLine = WsTunnel
 
 toPort :: String -> Int
 toPort "stdio" = 0
-toPort str = case readMay str of
+toPort str = case readMaybe str of
                   Just por -> por
-                  Nothing  -> error $ "Invalid port number `" ++ str ++ "`"
+                  Nothing  ->  panic $ "Invalid port number `" <> toS str <> "`"
 
 parseServerInfo :: WsServerInfo -> String -> WsServerInfo
 parseServerInfo server []                           = server
@@ -112,7 +115,7 @@ parseTunnelInfo strr = do
   where
     mkIPv4 [lPort, host, rPort]     = TunnelInfo {localHost = "127.0.0.1", Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
     mkIPv4 [bind,lPort, host,rPort] = TunnelInfo {localHost = bind, Main.localPort = toPort lPort, remoteHost = host, remotePort = toPort rPort}
-    mkIPv4 _                        = error $  "Invalid tunneling information `" ++ strr ++ "`, please use format [BIND:]PORT:HOST:PORT"
+    mkIPv4 _                        = panic $  "Invalid tunneling information `" <> toS strr <> "`, please use format [BIND:]PORT:HOST:PORT"
 
     mkIPv6 str = do
      let !(localHost, remain) = if BC.head str == '[' then
@@ -139,13 +142,13 @@ parseTunnelInfo strr = do
 
 parseRestrictTo :: String -> ((ByteString, Int) -> Bool)
 parseRestrictTo "" = const True
-parseRestrictTo str = let !(!h, !p) = fromMaybe (error "Invalid Parameter restart") parse
+parseRestrictTo str = let !(!h, !p) = fromMaybe (panic "Invalid Parameter restart") parse
   in (\(!hst, !port) -> hst == h && port == p)
   where
     parse = do
               let (host, port) = BC.spanEnd (/= ':') (BC.pack str)
               guard (host /= mempty)
-              portNumber <- readMay . BC.unpack $ port :: Maybe Int
+              portNumber <- readMaybe . BC.unpack $ port :: Maybe Int
               return $! (BC.filter (\c -> c /= '[' && c /= ']') (BC.init host), portNumber)
 
 parseProxyInfo :: String -> Maybe ProxySettings
@@ -155,13 +158,13 @@ parseProxyInfo str = do
   guard (length ret >= 2)
   if length ret == 3
   then do
-    portNumber <- readMay $ BC.unpack $ ret !! 2 :: Maybe Int
+    portNumber <- readMaybe $ BC.unpack $ ret !! 2 :: Maybe Int
     let cred = (head ret, head (BC.split '@' (ret !! 1)))
     let h = BC.split '@' (ret !! 1) !! 1
     return $ ProxySettings (BC.unpack h) (fromIntegral portNumber) (Just cred)
   else if length ret == 2
   then do
-    portNumber <- readMay . BC.unpack $ ret !! 1 :: Maybe Int
+    portNumber <- readMaybe . BC.unpack $ ret !! 1 :: Maybe Int
     return $ ProxySettings (BC.unpack $ head ret) (fromIntegral portNumber) Nothing
     else Nothing
 
@@ -184,7 +187,7 @@ main = do
 
   _ <- writeIORef sO_MARK_Value (soMark cfg)
   runApp cfg serverInfo
-  putStrLn "Goodbye !"
+  putStrLn ("Goodbye !" :: String)
   return ()
 
 
@@ -192,7 +195,7 @@ runApp :: WsTunnel -> WsServerInfo -> IO ()
 runApp cfg serverInfo
   -- server mode
   | serverMode cfg = do
-      putStrLn $ "Starting server with opts " <> tshow serverInfo
+      --TODO putStrLn $ ("Starting server with opts " :: String) <> toS serverInfo
       runServer (Main.useTls serverInfo) (Main.host serverInfo, fromIntegral $ Main.port serverInfo) (parseRestrictTo $ restrictTo cfg)
 
   -- -L localToRemote tunnels
@@ -210,7 +213,7 @@ runApp cfg serverInfo
       runClient tunnelSetting
 
   | otherwise = do
-      putStrLn "Cannot parse correctly the command line. Please fill an issue"
+      putStrLn ("Cannot parse correctly the command line. Please fill an issue" :: ByteString)
 
   where
     toStdioLocalToRemoteTunnelSetting cfg serverInfo (TunnelInfo lHost lPort rHost rPort)  =

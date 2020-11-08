@@ -8,10 +8,14 @@ module Tunnel
     , rrunTCPClient
     ) where
 
-import           ClassyPrelude
+import           Protolude
 import           Data.Maybe                    (fromJust)
 
+import           Data.Char
+import           Data.IORef
+import           Data.String
 import qualified Data.ByteString.Char8         as BC
+import qualified Data.ByteString.Lazy          as BL
 
 import qualified Data.Conduit.Network.TLS      as N
 import qualified Data.Streaming.Network        as N
@@ -27,7 +31,8 @@ import qualified Network.WebSockets.Stream     as WS
 
 import           Control.Monad.Except
 import qualified Network.Connection            as NC
-import           System.IO                     (IOMode (ReadWriteMode))
+import           System.IO                     (IOMode (ReadWriteMode), hClose)
+import           System.Timeout
 
 import qualified Data.ByteString.Base64        as B64
 
@@ -65,14 +70,14 @@ tunnelingClientP cfg@TunnelSettings{..} app conn = onError $ do
   debug "Oppening Websocket stream"
 
   stream <- connectionToStream conn
-  let headers = if not (null upgradeCredentials) then [("Authorization", "Basic " <> B64.encode upgradeCredentials)] else []
+  let headers = ([("Authorization", "Basic " <> B64.encode upgradeCredentials) | not (BC.null upgradeCredentials)])
   ret <- WS.runClientWithStream stream serverHost (toPath cfg) WS.defaultConnectionOptions headers run
 
   debug "Closing Websocket stream"
   return ret
 
   where
-    connectionToStream Connection{..} =  WS.makeStream read (write . toStrict . fromJust)
+    connectionToStream Connection{..} =  WS.makeStream read (write . BL.toStrict . fromJust)
     onError = flip catch (\(e :: SomeException) -> return . throwError . WebsocketError $ show e)
     run cnx = do
       WS.forkPingThread cnx 30
@@ -169,7 +174,7 @@ runClient cfg@TunnelSettings{..} = do
   let app cfg' localH = do
         ret <- withTunnel cfg' $ \remoteH -> do
           ret <- remoteH <==> toConnection localH
-          info $ "CLOSE tunnel :: " <> show cfg'
+          -- TODO info $ "CLOSE tunnel :: " <> show cfg'
           return ret
 
         handleError ret
@@ -198,7 +203,7 @@ runTlsTunnelingServer endPoint@(bindTo, portNumber) isAllowed = do
   where
     runApp :: N.AppData -> WS.ConnectionOptions -> WS.ServerApp -> IO ()
     runApp appData opts app = do
-      stream <- WS.makeStream (N.appRead appData <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite appData . toStrict . fromJust)
+      stream <- WS.makeStream (N.appRead appData <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite appData . BL.toStrict . fromJust)
       bracket (WS.makePendingConnectionFromStream stream opts)
               (\conn -> catch (WS.close $ WS.pendingStream conn) (\(_ :: SomeException) -> return ()))
               app
@@ -209,7 +214,7 @@ runTunnelingServer endPoint@(host, port) isAllowed = do
 
   let srvSet = N.setReadBufferSize defaultRecvBufferSize $ N.serverSettingsTCP (fromIntegral port) (fromString host)
   void $ N.runTCPServer srvSet $ \sClient -> do
-    stream <- WS.makeStream (N.appRead sClient <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite sClient . toStrict . fromJust)
+    stream <- WS.makeStream (N.appRead sClient <&> \payload -> if payload == mempty then Nothing else Just payload) (N.appWrite sClient . BL.toStrict . fromJust)
     runApp stream WS.defaultConnectionOptions (serverEventLoop (N.appSockAddr sClient) isAllowed)
 
   info "CLOSE server"
@@ -249,7 +254,7 @@ runServer useTLS = if useTLS then runTlsTunnelingServer else runTunnelingServer
 --
 toPath :: TunnelSettings -> String
 toPath TunnelSettings{..} = "/" <> upgradePrefix <> "/"
-                            <> toLower (show $ if protocol == UDP then UDP else TCP)
+                            <> (toLower <$> show (if protocol == UDP then UDP else TCP))
                             <> "/" <> destHost <> "/" <> show destPort
 
 fromPath :: ByteString -> Maybe (Protocol, ByteString, Int)
@@ -257,8 +262,8 @@ fromPath path = let rets = BC.split '/' . BC.drop 1 $ path
   in do
     guard (length rets == 4)
     let [_, protocol, h, prt] = rets
-    prt' <- readMay . BC.unpack $ prt :: Maybe Int
-    proto <- readMay . toUpper . BC.unpack $ protocol :: Maybe Protocol
+    prt' <- readMaybe . BC.unpack $ prt :: Maybe Int
+    proto <- readMaybe $ toUpper <$> BC.unpack protocol :: Maybe Protocol
     return (proto, h, prt')
 
 handleError :: Either Error () -> IO ()
@@ -290,4 +295,4 @@ propagateReads hTunnel hOther = forever $ read hTunnel >>= write hOther . fromJu
 propagateWrites :: Connection -> Connection -> IO ()
 propagateWrites hTunnel hOther = do
   payload <- fromJust <$> read hOther
-  unless (null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)
+  unless (BC.null payload) (write hTunnel payload >> propagateWrites hTunnel hOther)

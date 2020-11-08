@@ -3,12 +3,16 @@
 
 module Protocols where
 
-import           ClassyPrelude
+import           Protolude
 import           Control.Concurrent        (forkIO)
 import qualified Data.HashMap.Strict       as H
-import           System.IO                 hiding (hSetBuffering, hGetBuffering)
+import           System.IO
+import           System.Timeout
 
+import           Data.IORef
+import           Data.String
 import qualified Data.ByteString.Char8     as BC
+import qualified Data.ByteString.Lazy      as BL
 
 import qualified Data.Streaming.Network    as N
 
@@ -71,7 +75,7 @@ runUDPServer :: (HostName, PortNumber) ->  Int -> (UdpAppData -> IO ()) -> IO ()
 runUDPServer endPoint@(host, port) cnxTimeout app = do
   info $ "WAIT for datagrames on " <> toStr endPoint
   clientsCtx <- newIORef mempty
-  void $ bracket (N.bindPortUDP (fromIntegral port) (fromString host)) N.close (runEventLoop clientsCtx)
+  void $ bracket (N.bindPortUDP (fromIntegral port) (fromString (host :: String))) N.close (runEventLoop clientsCtx)
   info $ "CLOSE udp server" <> toStr endPoint
 
   where
@@ -117,17 +121,17 @@ runSocks5Server socksSettings@Socks5.ServerSettings{..} cfg inner = do
 
   N.runTCPServer (N.serverSettingsTCP (fromIntegral listenOn) (fromString bindOn)) $ \cnx -> do
     -- Get the auth request and response with a no Auth
-    authRequest <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.RequestAuth
+    authRequest <- decode . BL.fromStrict <$> N.appRead cnx :: IO Socks5.RequestAuth
     debug $ "Socks5 authentification request " <> show authRequest
     let responseAuth = encode $ Socks5.ResponseAuth (fromIntegral Socks5.socksVersion) Socks5.NoAuth
-    N.appWrite cnx (toStrict responseAuth)
+    N.appWrite cnx (BL.toStrict responseAuth)
 
     -- Get the request and update dynamically the tunnel config
-    request <- decode . fromStrict <$> N.appRead cnx :: IO Socks5.Request
+    request <- decode . BL.fromStrict <$> N.appRead cnx :: IO Socks5.Request
     debug $ "Socks5 forward request " <> show request
     let responseRequest =  encode $ Socks5.Response (fromIntegral Socks5.socksVersion) Socks5.SUCCEEDED (Socks5.addr request) (Socks5.port request)
     let cfg' = cfg { destHost = Socks5.addr request, destPort = Socks5.port request }
-    N.appWrite cnx (toStrict responseRequest)
+    N.appWrite cnx (BL.toStrict responseRequest)
 
     inner cfg' cnx
 
